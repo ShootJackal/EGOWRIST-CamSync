@@ -1,8 +1,15 @@
 export type CameraId = 1 | 2 | 3;
 
-export type ConnectionMode = 'local' | 'tunnel' | 'mock';
+export type ConnectionMode = 'local' | 'tunnel' | 'mock' | 'ble';
 
-export type BridgeStatus = 'connected' | 'unreachable' | 'mock' | 'error' | 'connecting';
+export type BridgeStatus = 'connected' | 'unreachable' | 'mock' | 'ble' | 'error' | 'connecting' | 'unsupported';
+
+export interface PairedBleDevice {
+  cameraId: CameraId;
+  bleId: string;
+  name: string;
+  pairedAt: string;
+}
 
 export type CameraConnectionState =
   | 'disconnected'
@@ -55,6 +62,7 @@ export interface BridgeSettings {
   bridgeUrl: string;
   authToken: string;
   connectionMode: ConnectionMode;
+  pairedBleDevices: PairedBleDevice[];
 }
 
 export interface BridgeHealthResponse {
@@ -97,6 +105,7 @@ export const DEFAULT_BRIDGE_SETTINGS: BridgeSettings = {
   bridgeUrl: process.env.EXPO_PUBLIC_DEFAULT_BRIDGE_URL ?? '',
   authToken: '',
   connectionMode: 'mock',
+  pairedBleDevices: [],
 };
 
 export const CAMERA_IDS: CameraId[] = [1, 2, 3];

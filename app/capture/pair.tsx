@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -7,10 +7,12 @@ import {
   View,
   Pressable,
   ActivityIndicator,
-  Alert,
+  TextInput,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Bluetooth, RefreshCw, Check, X } from 'lucide-react-native';
+import { ArrowLeft, Bluetooth, RefreshCw, Check, X, Pencil } from 'lucide-react-native';
 
 import { CameraId, CAMERA_IDS, PairedBleDevice, BridgeSettings } from '@/lib/capture/types';
 import { loadBridgeSettings, saveBridgeSettings } from '@/lib/capture/storage';
@@ -22,6 +24,12 @@ interface ScanItem {
   name: string;
   rssi: number | null;
 }
+
+const PLACEHOLDER_NICKS: Record<CameraId, string> = {
+  1: 'e.g. Left Wrist',
+  2: 'e.g. Right Wrist',
+  3: 'e.g. Helmet',
+};
 
 export default function PairScreen() {
   const router = useRouter();
@@ -47,14 +55,15 @@ export default function PairScreen() {
     setError(null);
     setScanning(true);
     setResults([]);
+    let tmp: BleGoProClient | null = null;
     try {
-      const tmp = new BleGoProClient([]);
+      tmp = new BleGoProClient([]);
       const found = await tmp.scan(8000);
-      tmp.destroy();
       setResults(found);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Scan failed');
     } finally {
+      tmp?.destroy();
       setScanning(false);
     }
   }, [bleAvailable]);
@@ -62,11 +71,18 @@ export default function PairScreen() {
   const assign = useCallback(
     async (item: ScanItem) => {
       if (!settings || assignTarget === null) return;
+      const existing = settings.pairedBleDevices.find((d) => d.cameraId === assignTarget);
       const next: BridgeSettings = {
         ...settings,
         pairedBleDevices: [
           ...settings.pairedBleDevices.filter((d) => d.cameraId !== assignTarget && d.bleId !== item.bleId),
-          { cameraId: assignTarget, bleId: item.bleId, name: item.name, pairedAt: new Date().toISOString() },
+          {
+            cameraId: assignTarget,
+            bleId: item.bleId,
+            name: item.name,
+            nickname: existing?.nickname,
+            pairedAt: new Date().toISOString(),
+          },
         ],
       };
       await persist(next);
@@ -87,6 +103,21 @@ export default function PairScreen() {
     [settings, persist],
   );
 
+  const setNickname = useCallback(
+    async (cameraId: CameraId, nickname: string) => {
+      if (!settings) return;
+      const trimmed = nickname.slice(0, 32);
+      const next: BridgeSettings = {
+        ...settings,
+        pairedBleDevices: settings.pairedBleDevices.map((d) =>
+          d.cameraId === cameraId ? { ...d, nickname: trimmed } : d,
+        ),
+      };
+      await persist(next);
+    },
+    [settings, persist],
+  );
+
   if (!bleAvailable) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -96,8 +127,8 @@ export default function PairScreen() {
           <Text style={styles.unsupportedTitle}>Direct BLE not available here</Text>
           <Text style={styles.unsupportedText}>
             Direct camera control over Bluetooth requires the native iOS or Android app
-            (built from this repo via EAS). The web version on Vercel cannot use Bluetooth
-            because Safari and most mobile browsers do not implement Web Bluetooth.
+            (built from this repo via EAS). The web version on Vercel cannot use
+            Bluetooth — Safari and most mobile browsers do not implement Web Bluetooth.
           </Text>
           <Text style={styles.unsupportedText}>
             See README → "Direct BLE (no Mac, no cables)" for the build steps.
@@ -112,41 +143,22 @@ export default function PairScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <Header onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Camera slots */}
-        <Section title="Cameras">
-          {CAMERA_IDS.map((id) => {
+        <Section title="Slots">
+          {CAMERA_IDS.map((id, idx) => {
             const p = paired.find((d) => d.cameraId === id);
             return (
-              <View key={id} style={styles.slot}>
-                <View style={styles.slotLeft}>
-                  <Text style={styles.slotTitle}>GoPro {id}</Text>
-                  {p ? (
-                    <>
-                      <Text style={styles.slotPaired} numberOfLines={1}>{p.name}</Text>
-                      <Text style={styles.slotMeta} numberOfLines={1}>{p.bleId}</Text>
-                    </>
-                  ) : (
-                    <Text style={styles.slotEmpty}>Not paired</Text>
-                  )}
-                </View>
-                <View style={styles.slotActions}>
-                  {p ? (
-                    <Pressable onPress={() => unpair(id)} style={styles.unpairBtn}>
-                      <X size={14} color="#ef4444" />
-                      <Text style={styles.unpairLabel}>Unpair</Text>
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    onPress={() => setAssignTarget(id)}
-                    style={[styles.assignBtn, assignTarget === id && styles.assignBtnActive]}
-                  >
-                    <Text style={[styles.assignLabel, assignTarget === id && styles.assignLabelActive]}>
-                      {assignTarget === id ? 'Selecting…' : p ? 'Replace' : 'Assign'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
+              <SlotRow
+                key={id}
+                isLast={idx === CAMERA_IDS.length - 1}
+                cameraId={id}
+                paired={p}
+                isAssigning={assignTarget === id}
+                onAssign={() => setAssignTarget((t) => (t === id ? null : id))}
+                onUnpair={() => unpair(id)}
+                onNicknameChange={(n) => setNickname(id, n)}
+              />
             );
           })}
         </Section>
@@ -156,48 +168,46 @@ export default function PairScreen() {
           <Pressable
             onPress={startScan}
             disabled={scanning}
-            style={({ pressed }) => [styles.scanBtn, { opacity: scanning ? 0.5 : pressed ? 0.8 : 1 }]}
+            style={({ pressed }) => [styles.scanBtn, { opacity: scanning ? 0.7 : pressed ? 0.85 : 1 }]}
           >
             {scanning ? <ActivityIndicator color="#fff" /> : <RefreshCw size={16} color="#fff" />}
-            <Text style={styles.scanLabel}>{scanning ? 'Scanning…' : 'Scan for GoPros'}</Text>
+            <Text style={styles.scanLabel}>{scanning ? 'Scanning for 8 seconds…' : 'Scan for GoPros'}</Text>
           </Pressable>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
           {assignTarget !== null && (
-            <Text style={styles.hint}>Tap a discovered camera to assign it as GoPro {assignTarget}.</Text>
+            <View style={styles.assignBanner}>
+              <Text style={styles.assignBannerText}>
+                Tap a discovered camera to assign it to slot {assignTarget}.
+              </Text>
+              <Pressable onPress={() => setAssignTarget(null)} hitSlop={8}>
+                <X size={14} color="#9ca3af" />
+              </Pressable>
+            </View>
           )}
+
           {results.length === 0 && !scanning && !error ? (
             <Text style={styles.hint}>
-              Put each GoPro in pairing mode (Connections → Connect Device → GoPro Quik App), then scan.
+              On each GoPro: Preferences → Connections → Connect Device → GoPro Quik App.
+              Then tap Scan.
             </Text>
           ) : null}
+
           {results.map((item) => {
             const alreadyPaired = paired.find((d) => d.bleId === item.bleId);
             return (
-              <Pressable
+              <ScanResultRow
                 key={item.bleId}
-                onPress={() => {
-                  if (assignTarget !== null) {
-                    void assign(item);
-                  } else {
-                    Alert.alert('Pick a slot first', 'Tap "Assign" next to GoPro 1, 2, or 3.');
-                  }
-                }}
-                style={({ pressed }) => [styles.resultRow, { opacity: pressed ? 0.7 : 1 }]}
-              >
-                <Bluetooth size={16} color="#60a5fa" />
-                <View style={styles.resultText}>
-                  <Text style={styles.resultName}>{item.name}</Text>
-                  <Text style={styles.resultId}>{item.bleId}</Text>
-                </View>
-                {alreadyPaired ? (
-                  <View style={styles.resultPaired}>
-                    <Check size={12} color="#10b981" />
-                    <Text style={styles.resultPairedLabel}>Cam {alreadyPaired.cameraId}</Text>
-                  </View>
-                ) : item.rssi !== null ? (
-                  <Text style={styles.rssi}>{item.rssi} dBm</Text>
-                ) : null}
-              </Pressable>
+                item={item}
+                alreadyPairedTo={alreadyPaired?.cameraId ?? null}
+                canAssign={assignTarget !== null}
+                onPress={() => assign(item)}
+              />
             );
           })}
         </Section>
@@ -211,10 +221,142 @@ export default function PairScreen() {
   );
 }
 
+interface SlotRowProps {
+  cameraId: CameraId;
+  paired?: PairedBleDevice;
+  isAssigning: boolean;
+  isLast: boolean;
+  onAssign: () => void;
+  onUnpair: () => void;
+  onNicknameChange: (n: string) => void;
+}
+
+function SlotRow({ cameraId, paired, isAssigning, isLast, onAssign, onUnpair, onNicknameChange }: SlotRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(paired?.nickname ?? '');
+
+  useEffect(() => { setDraft(paired?.nickname ?? ''); }, [paired?.nickname]);
+
+  const commit = () => {
+    onNicknameChange(draft);
+    setEditing(false);
+  };
+
+  return (
+    <View style={[styles.slot, isLast && styles.slotLast]}>
+      <View style={styles.slotMain}>
+        <View style={styles.slotIndex}>
+          <Text style={styles.slotIndexText}>{cameraId}</Text>
+        </View>
+        <View style={styles.slotBody}>
+          {editing ? (
+            <View style={styles.slotEditRow}>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                onBlur={commit}
+                onSubmitEditing={commit}
+                placeholder={PLACEHOLDER_NICKS[cameraId]}
+                placeholderTextColor="#4b5563"
+                autoFocus
+                maxLength={32}
+                style={styles.nickInput}
+              />
+              <Pressable onPress={commit} style={styles.nickSave}>
+                <Check size={14} color="#10b981" />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={() => paired && setEditing(true)} disabled={!paired}>
+              <View style={styles.slotTitleRow}>
+                <Text style={styles.slotTitle}>
+                  {paired?.nickname?.trim() || `GoPro ${cameraId}`}
+                </Text>
+                {paired ? <Pencil size={11} color="#6b7280" /> : null}
+              </View>
+            </Pressable>
+          )}
+          {paired ? (
+            <>
+              <Text style={styles.slotSub} numberOfLines={1}>
+                {paired.name}
+              </Text>
+              <Text style={styles.slotMeta} numberOfLines={1}>
+                {paired.bleId}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.slotEmpty}>Not paired</Text>
+          )}
+        </View>
+        <View style={styles.slotActions}>
+          {paired ? (
+            <Pressable onPress={onUnpair} style={styles.unpairBtn} hitSlop={6}>
+              <X size={14} color="#ef4444" />
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={onAssign}
+            style={[styles.assignBtn, isAssigning && styles.assignBtnActive]}
+          >
+            <Text style={[styles.assignLabel, isAssigning && styles.assignLabelActive]}>
+              {isAssigning ? 'Pick…' : paired ? 'Replace' : 'Assign'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+interface ScanResultRowProps {
+  item: ScanItem;
+  alreadyPairedTo: CameraId | null;
+  canAssign: boolean;
+  onPress: () => void;
+}
+
+function ScanResultRow({ item, alreadyPairedTo, canAssign, onPress }: ScanResultRowProps) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!canAssign) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+        Animated.timing(pulse, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [canAssign, pulse]);
+
+  const bg = canAssign ? pulse.interpolate({ inputRange: [0, 1], outputRange: ['#1f2937', '#1d3a6a'] }) : '#1f2937';
+
+  return (
+    <Pressable onPress={onPress} disabled={!canAssign}>
+      <Animated.View style={[styles.resultRow, { backgroundColor: bg as any, opacity: canAssign ? 1 : 0.55 }]}>
+        <Bluetooth size={16} color={canAssign ? '#60a5fa' : '#6b7280'} />
+        <View style={styles.resultText}>
+          <Text style={styles.resultName}>{item.name}</Text>
+          <Text style={styles.resultId}>{item.bleId}</Text>
+        </View>
+        {alreadyPairedTo !== null ? (
+          <View style={styles.resultPaired}>
+            <Check size={12} color="#10b981" />
+            <Text style={styles.resultPairedLabel}>Cam {alreadyPairedTo}</Text>
+          </View>
+        ) : item.rssi !== null ? (
+          <Text style={styles.rssi}>{item.rssi} dBm</Text>
+        ) : null}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function Header({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable onPress={onBack} style={styles.backBtn}>
+      <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
         <ArrowLeft size={20} color="#9ca3af" />
       </Pressable>
       <Text style={styles.title}>Pair Cameras</Text>
@@ -266,19 +408,40 @@ const styles = StyleSheet.create({
   },
 
   slot: {
-    flexDirection: 'row',
-    alignItems: 'center',
     padding: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#374151',
-    gap: 8,
   },
-  slotLeft: { flex: 1 },
-  slotTitle: { fontSize: 14, fontWeight: '700', color: '#f3f4f6' },
-  slotPaired: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
-  slotMeta: { fontSize: 11, color: '#6b7280', marginTop: 1, fontFamily: 'monospace' },
+  slotLast: { borderBottomWidth: 0 },
+  slotMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  slotIndex: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1e3a5f',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  slotIndexText: { color: '#93c5fd', fontWeight: '700', fontSize: 13 },
+  slotBody: { flex: 1 },
+  slotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  slotTitle: { fontSize: 15, fontWeight: '700', color: '#f3f4f6' },
+  slotSub: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
+  slotMeta: { fontSize: 10, color: '#6b7280', marginTop: 1, fontFamily: 'monospace' },
   slotEmpty: { fontSize: 12, color: '#6b7280', marginTop: 2, fontStyle: 'italic' },
-  slotActions: { flexDirection: 'row', gap: 6 },
+
+  slotEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  nickInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#f3f4f6',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#3b82f6',
+  },
+  nickSave: { padding: 4 },
+
+  slotActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   assignBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -289,16 +452,12 @@ const styles = StyleSheet.create({
   assignLabel: { fontSize: 12, color: '#93c5fd', fontWeight: '600' },
   assignLabelActive: { color: '#fff' },
   unpairBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#ef444444',
   },
-  unpairLabel: { fontSize: 11, color: '#ef4444', fontWeight: '600' },
 
   scanBtn: {
     flexDirection: 'row',
@@ -311,8 +470,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#3b82f6',
   },
   scanLabel: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  error: { fontSize: 12, color: '#f87171', paddingHorizontal: 14, paddingBottom: 6 },
-  hint: { fontSize: 12, color: '#9ca3af', paddingHorizontal: 14, paddingBottom: 8, lineHeight: 18 },
+
+  errorBox: {
+    marginHorizontal: 14,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#ef444415',
+    borderWidth: 1,
+    borderColor: '#ef444433',
+  },
+  errorText: { fontSize: 12, color: '#f87171' },
+
+  assignBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 14,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#1d3a6a40',
+    borderWidth: 1,
+    borderColor: '#3b82f655',
+  },
+  assignBannerText: { fontSize: 12, color: '#93c5fd', flex: 1 },
+
+  hint: { fontSize: 12, color: '#9ca3af', paddingHorizontal: 14, paddingBottom: 14, lineHeight: 18 },
 
   resultRow: {
     flexDirection: 'row',

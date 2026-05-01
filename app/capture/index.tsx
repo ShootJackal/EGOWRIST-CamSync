@@ -82,9 +82,11 @@ export default function CaptureDashboard() {
     setBridgeStatus('connecting');
     try {
       await Api.checkHealth();
-      setBridgeStatus(Api.isMockMode() ? 'mock' : 'connected');
+      if (Api.isBleMode()) setBridgeStatus(Api.bleSupportedHere() ? 'ble' : 'unsupported');
+      else setBridgeStatus(Api.isMockMode() ? 'mock' : 'connected');
     } catch {
-      setBridgeStatus(Api.isMockMode() ? 'mock' : 'unreachable');
+      if (Api.isBleMode()) setBridgeStatus(Api.bleSupportedHere() ? 'ble' : 'unsupported');
+      else setBridgeStatus(Api.isMockMode() ? 'mock' : 'unreachable');
     }
   }, []);
 

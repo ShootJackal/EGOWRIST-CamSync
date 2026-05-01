@@ -50,6 +50,10 @@ export default function CaptureLayout() {
         name="camera/[id]"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="pair"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

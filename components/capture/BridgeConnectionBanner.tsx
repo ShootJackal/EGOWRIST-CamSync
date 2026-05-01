@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { Wifi, WifiOff, FlaskConical, AlertTriangle } from 'lucide-react-native';
+import { Wifi, WifiOff, FlaskConical, AlertTriangle, Bluetooth } from 'lucide-react-native';
 import { BridgeStatus } from '@/lib/capture/types';
 
 interface Props {
@@ -49,7 +49,23 @@ const CONFIG: Record<
     border: '#f59e0b44',
     text: '#f59e0b',
     icon: <ActivityIndicator size="small" color="#f59e0b" />,
-    label: 'Connecting to bridge…',
+    label: 'Connecting…',
+  },
+  ble: {
+    bg: '#1e3a5f20',
+    border: '#3b82f644',
+    text: '#60a5fa',
+    icon: <Bluetooth size={15} color="#60a5fa" />,
+    label: 'Direct BLE',
+    sub: 'Phone is talking to GoPros directly — no Mac, no cables',
+  },
+  unsupported: {
+    bg: '#7f1d1d20',
+    border: '#ef444444',
+    text: '#f87171',
+    icon: <AlertTriangle size={15} color="#f87171" />,
+    label: 'Direct BLE not supported here',
+    sub: 'Open the native iOS/Android app to use Direct BLE',
   },
 };
 

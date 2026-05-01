@@ -7,22 +7,23 @@ import {
   View,
   TextInput,
   Pressable,
-  Switch,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
-import { CheckCircle, XCircle, FlaskConical, Wifi, Globe, HelpCircle } from 'lucide-react-native';
-import { BridgeSettings, ConnectionMode, DEFAULT_BRIDGE_SETTINGS } from '@/lib/capture/types';
+import { useRouter } from 'expo-router';
+import { CheckCircle, XCircle, FlaskConical, Wifi, Globe, Bluetooth, ChevronRight } from 'lucide-react-native';
+import { BridgeSettings, DEFAULT_BRIDGE_SETTINGS } from '@/lib/capture/types';
 import { loadBridgeSettings, saveBridgeSettings, clearBridgeSettings } from '@/lib/capture/storage';
 import * as Api from '@/lib/capture/api';
 
 type TestStatus = 'idle' | 'testing' | 'ok' | 'error';
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const [settings, setSettings] = useState<BridgeSettings>(DEFAULT_BRIDGE_SETTINGS);
   const [testStatus, setTestStatus] = useState<TestStatus>('idle');
   const [testError, setTestError] = useState('');
   const [saved, setSaved] = useState(false);
+  const bleHere = Api.bleSupportedHere();
 
   useEffect(() => {
     loadBridgeSettings().then(setSettings);
@@ -61,6 +62,8 @@ export default function SettingsScreen() {
   };
 
   const isMock = settings.connectionMode === 'mock';
+  const isBle = settings.connectionMode === 'ble';
+  const pairedCount = settings.pairedBleDevices?.length ?? 0;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -70,30 +73,60 @@ export default function SettingsScreen() {
         {/* Connection mode */}
         <Section title="Connection Mode">
           <ModeButton
+            active={isBle}
+            label={`Direct BLE${bleHere ? '' : ' (native app only)'}`}
+            sub={
+              bleHere
+                ? 'Phone talks to each GoPro directly over Bluetooth — no Mac, no cables'
+                : 'Open this build as the native iOS/Android app to enable. Web cannot use Bluetooth.'
+            }
+            icon={<Bluetooth size={18} color={isBle ? '#60a5fa' : '#6b7280'} />}
+            onPress={() => bleHere && update({ connectionMode: 'ble' })}
+            disabled={!bleHere}
+          />
+          <ModeButton
             active={settings.connectionMode === 'mock'}
             label="Mock"
-            sub="Simulated cameras — no bridge required"
+            sub="Simulated cameras — works anywhere, no hardware"
             icon={<FlaskConical size={18} color={settings.connectionMode === 'mock' ? '#60a5fa' : '#6b7280'} />}
             onPress={() => update({ connectionMode: 'mock' })}
           />
           <ModeButton
             active={settings.connectionMode === 'local'}
-            label="Local LAN"
+            label="Local LAN (bridge)"
             sub="Bridge running on Mac, same Wi-Fi network"
             icon={<Wifi size={18} color={settings.connectionMode === 'local' ? '#60a5fa' : '#6b7280'} />}
             onPress={() => update({ connectionMode: 'local' })}
           />
           <ModeButton
             active={settings.connectionMode === 'tunnel'}
-            label="Tunnel"
+            label="Tunnel (bridge)"
             sub="Cloudflare or ngrok HTTPS tunnel URL"
             icon={<Globe size={18} color={settings.connectionMode === 'tunnel' ? '#60a5fa' : '#6b7280'} />}
             onPress={() => update({ connectionMode: 'tunnel' })}
           />
         </Section>
 
+        {/* BLE pairing */}
+        {isBle && (
+          <Section title="Paired GoPros">
+            <Pressable onPress={() => router.push('/capture/pair' as never)} style={styles.pairRow}>
+              <Bluetooth size={18} color="#60a5fa" />
+              <View style={styles.pairText}>
+                <Text style={styles.pairLabel}>Pair Cameras</Text>
+                <Text style={styles.pairSub}>
+                  {pairedCount === 0
+                    ? 'No cameras paired yet'
+                    : `${pairedCount} paired — tap to manage`}
+                </Text>
+              </View>
+              <ChevronRight size={18} color="#6b7280" />
+            </Pressable>
+          </Section>
+        )}
+
         {/* Bridge URL */}
-        {!isMock && (
+        {!isMock && !isBle && (
           <Section title="Bridge URL">
             <TextInput
               style={styles.input}
@@ -118,7 +151,7 @@ export default function SettingsScreen() {
         )}
 
         {/* Auth token */}
-        {!isMock && (
+        {!isMock && !isBle && (
           <Section title="Auth Token (optional)">
             <TextInput
               style={styles.input}
@@ -137,7 +170,7 @@ export default function SettingsScreen() {
         )}
 
         {/* Test connection */}
-        {!isMock && (
+        {!isMock && !isBle && (
           <Section title="Connection Test">
             <Pressable
               onPress={handleTest}
@@ -233,17 +266,26 @@ interface ModeBtnProps {
   sub: string;
   icon: React.ReactNode;
   onPress: () => void;
+  disabled?: boolean;
 }
 
-function ModeButton({ active, label, sub, icon, onPress }: ModeBtnProps) {
+function ModeButton({ active, label, sub, icon, onPress, disabled }: ModeBtnProps) {
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.modeBtn, active && styles.modeBtnActive]}
+      disabled={disabled}
+      style={[styles.modeBtn, active && styles.modeBtnActive, disabled && styles.modeBtnDisabled]}
     >
       {icon}
       <View style={styles.modeBtnText}>
-        <Text style={[styles.modeBtnLabel, { color: active ? '#93c5fd' : '#d1d5db' }]}>{label}</Text>
+        <Text
+          style={[
+            styles.modeBtnLabel,
+            { color: disabled ? '#6b7280' : active ? '#93c5fd' : '#d1d5db' },
+          ]}
+        >
+          {label}
+        </Text>
         <Text style={styles.modeBtnSub}>{sub}</Text>
       </View>
       {active && <View style={styles.activeCheck} />}
@@ -279,6 +321,16 @@ const styles = StyleSheet.create({
     borderBottomColor: '#374151',
   },
   modeBtnActive: { backgroundColor: '#1d3a6a30' },
+  modeBtnDisabled: { opacity: 0.55 },
+  pairRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+  },
+  pairText: { flex: 1 },
+  pairLabel: { fontSize: 14, fontWeight: '600', color: '#f3f4f6' },
+  pairSub: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
   modeBtnText: { flex: 1 },
   modeBtnLabel: { fontSize: 14, fontWeight: '600' },
   modeBtnSub: { fontSize: 12, color: '#6b7280', marginTop: 1 },

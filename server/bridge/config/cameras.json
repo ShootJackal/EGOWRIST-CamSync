@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "name": "GoPro 1",
+    "ssid": "GP24500001",
+    "password": "",
+    "connectionType": "wifi"
+  },
+  {
+    "id": 2,
+    "name": "GoPro 2",
+    "ssid": "GP24500002",
+    "password": "",
+    "connectionType": "wifi"
+  },
+  {
+    "id": 3,
+    "name": "GoPro 3",
+    "ssid": "GP24500003",
+    "password": "",
+    "connectionType": "wifi"
+  }
+]

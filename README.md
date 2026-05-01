@@ -1,37 +1,35 @@
 # EGO GoProSYNC — TaskFlow Capture
 
-A Camera-Tools-style remote for three body-worn GoPro cameras. Built for
+A purpose-built remote for three body-worn GoPro cameras. Built for
 ego-centric data collection: collectors wear GoPros on their limbs, hold the
-phone, and start/stop all three cameras from one screen.
+phone, and start / stop all three cameras from one screen.
 
 **Three connection modes — pick the one that matches your situation:**
 
 | Mode | Phone talks to GoPros via | Anything attached to the GoPros? | Where the app runs |
 |---|---|---|---|
-| **Direct BLE** *(recommended)* | The phone's own Bluetooth | Nothing | Native iOS/Android app (built from this repo) |
+| **Direct BLE** *(recommended for collection)* | The phone's own Bluetooth | Nothing | Native iOS / Android app (built from this repo) |
 | **Mock** | n/a — simulated | Nothing | Anywhere (Vercel web, native, dev) |
 | **Bridge** | A Mac on the same Wi-Fi as the cameras | Nothing | Anywhere; Mac runs the bridge |
 
-The Direct BLE mode is exactly the architecture used by
-[Camera Tools for GoPro Heros](https://www.toolsforgopro.com/cameratools) —
-no Mac, no cables, no router, no SD-card swap. Just the phone talking
-Bluetooth straight to each camera using the
-[Open GoPro BLE protocol](https://gopro.github.io/OpenGoPro/ble/).
+In Direct BLE mode the phone speaks the
+[Open GoPro BLE protocol](https://gopro.github.io/OpenGoPro/ble/) straight to
+each camera — no Mac, no cables, no router, no SD-card swap.
 
 ---
 
 ## Why a native app, not just a Vercel website
 
 The Vercel-hosted web build of this app **cannot** drive GoPros over BLE — iOS
-Safari does not implement Web Bluetooth, and even if it did the GoPro Wi-Fi
+Safari does not implement Web Bluetooth, and even if it did, the GoPro Wi-Fi
 HTTP API does not send CORS headers, so a Vercel page can't call it. The web
-build is great for showing collectors the UI in mock mode and for desktop
-debugging, but for actual collection you build and install the native app
-on the phone.
+build is great for showing collectors the UI in mock mode and for stakeholder
+demos; for actual collection you build and install the native app on the
+phone.
 
 This repo ships both. Same TypeScript, same UI, two outputs:
 
-- `npm run vercel-build` → static web bundle in `dist/` (mock mode demo).
+- `npm run vercel-build` → static web bundle in `dist/` (mock-mode demo).
 - `npm run build:ios`    → native iOS app via [EAS Build](https://docs.expo.dev/eas/) (Direct BLE works here).
 
 ---
@@ -51,6 +49,7 @@ npm run web                 # http://localhost:8081
 ```
 
 Or push to Vercel — `npm run vercel-build` produces `dist/`.
+A full step-by-step deploy guide is in `DEPLOY.md`.
 
 ### 3. Build the native iOS app for real BLE control
 
@@ -106,7 +105,8 @@ In the app:
 1. **Settings → Direct BLE → Pair Cameras**.
 2. Tap **Assign** next to GoPro 1, then tap the camera name in the scan
    results. Repeat for GoPro 2 and 3.
-3. Go back to **Capture** → **Connect All** → **Start All**.
+3. Optionally rename each slot to "Left Wrist", "Helmet", etc.
+4. Go back to **Capture** → **Connect All** → **Start All**.
 
 iOS will store the BLE bond, so future launches connect without re-pairing.
 
@@ -114,11 +114,11 @@ iOS will store the BLE bond, so future launches connect without re-pairing.
 
 ## Bridge mode — when to use it
 
-If you specifically need the *desktop browser* on a Mac to drive the cameras
-(for scripting, multi-display setups, etc.), the Express bridge in
-`server/bridge/` still works exactly as before. See `TESTING.md` Stage 3
-for the bridge workflow. For ego-centric mobile collection, ignore the
-bridge entirely — Direct BLE is simpler and has no extra moving parts.
+If you specifically need a *desktop browser* on a Mac to drive the cameras
+(scripting, multi-display setups, etc.), the Express bridge in
+`server/bridge/` still works exactly as before. See `TESTING.md` for the
+bridge workflow. For ego-centric mobile collection, ignore the bridge
+entirely — Direct BLE is simpler and has no extra moving parts.
 
 ---
 
@@ -144,7 +144,7 @@ In **Settings → Connection Mode**, pick **Mock**.
 ```
 app/
   capture/
-    index.tsx          ← main dashboard
+    index.tsx          ← main dashboard (pre-flight gate, pull-to-refresh, haptics)
     settings.tsx       ← connection mode + pairing entry point
     pair.tsx           ← BLE scan + per-slot assignment (native only)
     logs.tsx           ← session history
@@ -155,6 +155,8 @@ lib/capture/
   bleClient.ts         ← Open GoPro BLE implementation (native)
   bridgeClient.ts      ← HTTP/WebSocket client for the Mac bridge
   mockBridgeClient.ts  ← in-process simulation
+  preflight.ts         ← readiness check (battery, storage, connection)
+  haptics.ts           ← native haptic feedback (no-op on web)
   types.ts
   storage.ts
   formatting.ts
@@ -188,9 +190,7 @@ npm run typecheck
 
 ## Vercel deployment
 
-Still works. The Vercel build is the mock-mode/UI-demo build; it cannot do
-BLE (browser limitation) but it's useful for stakeholder demos and lets you
-hand the URL to a collector who isn't ready to install the native app.
+Two-line summary; the long-form deploy guide is in `DEPLOY.md`.
 
 ```
 Build command:    npm run vercel-build
@@ -205,8 +205,7 @@ in Settings.
 ## Bridge API (only relevant in bridge mode)
 
 See `server/bridge/src/index.ts`. REST + WebSocket; identical contract to
-what the Direct BLE and Mock clients expose. Endpoints documented in the
-previous README revision are still valid:
+what the Direct BLE and Mock clients expose:
 
 `/api/health`, `/api/cameras`, `/api/cameras/:id/{connect,disconnect,start,stop,status}`,
 `/api/cameras/{connect,start,stop,status}-all`, `/api/sessions/active`, `/api/sessions`,

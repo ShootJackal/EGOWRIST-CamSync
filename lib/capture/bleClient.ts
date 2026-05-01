@@ -2,8 +2,7 @@
  * Direct BLE GoPro client.
  *
  * Speaks the Open GoPro BLE protocol from the phone to each camera, with no
- * Mac, no bridge, and nothing physically attached to the GoPros. This is the
- * Camera-Tools-style workflow.
+ * Mac, no bridge, and nothing physically attached to the GoPros.
  *
  * Open GoPro BLE spec: https://gopro.github.io/OpenGoPro/ble/
  *

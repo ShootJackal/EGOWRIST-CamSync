@@ -12,6 +12,8 @@
     "build:ios": "eas build --platform ios --profile preview",
     "build:ios:dev": "eas build --platform ios --profile development",
     "build:ios:sim": "eas build --platform ios --profile simulator",
+    "build:ios:testflight": "eas build --platform ios --profile testflight --auto-submit --submit-profile testflight",
+    "submit:ios:testflight": "eas submit --platform ios --latest --profile testflight",
     "build:android": "eas build --platform android --profile preview",
     "typecheck": "tsc --noEmit",
     "bridge": "cd server/bridge && npm run dev",

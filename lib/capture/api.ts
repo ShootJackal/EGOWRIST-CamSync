@@ -26,6 +26,18 @@ let client: AnyClient | null = null;
 let currentSettings: BridgeSettings | null = null;
 
 export function initApi(settings: BridgeSettings): void {
+  // Fast path: if only the paired-device list changed inside an already-live
+  // BLE client, push the update without tearing down the BLE manager and any
+  // active connections.
+  if (
+    client instanceof BleGoProClient &&
+    currentSettings?.connectionMode === 'ble' &&
+    settings.connectionMode === 'ble'
+  ) {
+    client.updatePaired(settings.pairedBleDevices);
+    currentSettings = settings;
+    return;
+  }
   destroyCurrentClient();
   currentSettings = settings;
   if (settings.connectionMode === 'ble' && isBleAvailable()) {

@@ -1,261 +1,187 @@
 # TESTING — Getting EGO GoProSYNC Ready for Field Use
 
-This walks you through validating the system in three stages, from "no cameras
-needed" to "three real GoPros mounted to a collector". Do them in order.
+Goal: a collector wears three GoPros on their limbs, holds an iPhone, opens
+this app, and starts/stops all three cameras at once. **Nothing physically
+attached to the GoPros — pure Bluetooth from the phone.**
 
-> **Goal:** A collector wears the iPhone in their pocket, opens the Vercel URL
-> in Safari, and can connect/start/stop all three body-worn GoPros from one
-> screen. The Mac bridge runs nearby (in a backpack, on a desk in the room,
-> etc.) and is what actually talks to the cameras over Wi-Fi.
+This is the same workflow as
+[Camera Tools for GoPro Heros](https://www.toolsforgopro.com/cameratools).
+
+There are three stages. Stage 0 needs nothing. Stage 1 needs the cameras.
+Stage 2 is the actual collection-day rehearsal.
 
 ---
 
-## Architecture (mental model)
+## Stage 0 — UI walk-through in mock mode (no hardware)
 
-```
-[ iPhone Safari ] ─ HTTPS ─▶ [ Vercel frontend ]
-                                    │
-                                    │  HTTP(S) + WebSocket
-                                    ▼
-                           [ Mac bridge :4000 ]   ◀── you start this
-                                    │
-                                    │  Open GoPro HTTP API over Wi-Fi
-                                    ▼
-                       GoPro 1   GoPro 2   GoPro 3
+Use this to show collectors the app and to verify deploys.
+
+```bash
+npm install
+npm run web        # http://localhost:8081
 ```
 
-**Key point:** the iPhone never talks to the GoPros. It only talks to the Mac
-bridge. The Mac bridge is the one on the GoPros' Wi-Fi network(s).
+Or just open the Vercel URL on a phone. **Settings → Connection Mode → Mock**.
+Walk through Connect All / Start All / Stop All. The recording session banner
+shows a live timer; the Logs tab records every session.
 
 ---
 
-## Stage 1 — Mock mode (no cameras, no bridge, no Mac)
+## Stage 1 — Native iOS build with Direct BLE (the real thing)
 
-Just the Vercel app. Use this to confirm the UI flows work and your collectors
-know how to use it.
+This is the *only* mode that gives you "no Mac, no cables, just the phone".
+You must build a native iOS app from this repo — Web Bluetooth doesn't exist
+on iOS Safari, so the Vercel page can't do it.
 
-1. Push this branch to GitHub and let Vercel auto-deploy, **or** test locally:
-   ```bash
-   npm install
-   npm run web        # opens http://localhost:8081
-   ```
-2. Open the app on your phone in Safari (or `localhost:8081` in a desktop browser).
-3. Tap **Settings** → **Connection Mode** → **Mock**. Save.
-4. Go to **Capture**. You should see:
-   - Banner: *"Mock mode — No bridge required"*
-   - Three camera cards labelled **GoPro 1 / 2 / 3**.
-5. Tap **Connect All** → all three cards turn green ("Online").
-6. Tap **Start All** → red recording banner appears with a live timer; cards say `● REC`.
-7. Tap a card → opens the camera detail screen with status, storage bar, and per-camera controls.
-8. Tap **Stop All** → session ends, duration shown. Switch to the **Logs** tab —
-   the session is recorded under "Sessions".
+### 1.1 One-time EAS setup (on a Mac, Linux, or Windows machine — not the phone)
 
-✅ If all of the above works, the app and UX are good.
+```bash
+npm install -g eas-cli
+eas login                 # prompts for your Expo account
+eas build:configure       # uses the eas.json already in the repo
+```
+
+If you don't have an Apple Developer account ($99/year), you can still build
+an internal-distribution app — `eas` will walk you through the Apple sign-ins.
+
+### 1.2 Build the app
+
+```bash
+npm run build:ios         # ~10–20 min; runs in EAS cloud, not on your machine
+```
+
+When it finishes, `eas` shows a download URL and an **install** link.
+
+Three install options, easiest first:
+
+- **TestFlight** (best for collectors who already have the TestFlight app).
+  `eas submit -p ios --latest --non-interactive` after the build.
+- **Direct install on the iPhone**: open the install URL in Safari **on the
+  iPhone**, tap "Install".
+- **Apple Configurator** (Mac only): drag the `.ipa` onto a connected iPhone.
+
+### 1.3 First launch on the iPhone
+
+1. Open the app.
+2. iOS will ask for **Bluetooth permission** — tap **Allow**. (This corresponds
+   to the `NSBluetoothAlwaysUsageDescription` in `app.json`.)
+3. **Settings tab → Connection Mode → Direct BLE**.
+4. The "Direct BLE" banner should turn blue and say *"Phone is talking to
+   GoPros directly — no Mac, no cables"*. If it says *"not supported here"*
+   you're in the web build, not the native build.
+
+### 1.4 Pair each GoPro (one-time per phone, per camera)
+
+For **each** of the three GoPros:
+
+1. On the camera: **Preferences → Connections → Connect Device → GoPro Quik App**.
+   The camera shows a screen waiting for connection.
+2. In the app: **Settings → Pair Cameras**.
+3. Tap **Assign** next to **GoPro 1**.
+4. Tap **Scan for GoPros**. Wait ~5 s. The camera appears as `GP24500001` (or
+   similar — the camera's serial/MAC).
+5. Tap that result → it's now bound to slot 1.
+6. Repeat for slots 2 and 3.
+
+iOS stores the BLE bond. Future launches connect without re-pairing as long as
+the cameras are powered on.
+
+### 1.5 Smoke test all three
+
+In the **Capture** tab:
+
+1. Tap **Connect All** → all three cards turn green within ~3 seconds.
+2. Tap **Start All** → red dots come on **on all three actual GoPros**;
+   the app banner shows the live recording timer.
+3. The banner also shows **"X ms command spread across cameras"** — for ego
+   collection you generally want this < 500 ms.
+4. Tap **Stop All** → red dots go off; the session moves to **Logs**.
+5. Open the GoPros' SD cards (or their Quik app) and confirm the new clip
+   exists on each.
+
+### 1.6 Per-camera tests (any one camera)
+
+Tap a camera card → **Camera Detail screen**. Confirm:
+
+- Battery percentage matches what the GoPro screen shows.
+- Storage bar fills proportionally to the camera's used space.
+- **Refresh** updates the values.
+- **Disconnect** then **Connect** cycle works.
 
 ---
 
-## Stage 2 — Local bridge in mock mode (Mac ↔ phone, no cameras yet)
+## Stage 2 — Collection-day rehearsal
 
-This proves the network path between iPhone Safari → Vercel → bridge works **before** you involve cameras.
+Day before the real shoot:
 
-### Mac side
+- [ ] All three GoPros charged > 90%.
+- [ ] All three SD cards reformatted in-camera, > 90% free.
+- [ ] All three GoPros on the latest firmware.
+- [ ] All three are paired in the app (Settings → Pair Cameras shows three
+      green slots).
+- [ ] Open Capture tab, hit **Connect All**, confirm three green cards.
+- [ ] Hit **Start All**, walk around the room with the phone, hit **Stop All**.
+      Confirm clips on all three SD cards.
+- [ ] iPhone is charged and on Do-Not-Disturb (avoids interruptions during
+      the run).
+- [ ] If you're outdoors, BLE range is realistic — typical Class-2 BLE is
+      ~10 m line-of-sight. With the phone in the collector's pocket and the
+      GoPros on their limbs, every camera is within arm's length, so this is
+      not a concern.
+
+On collection day, in this order:
+
+1. Power on all three GoPros (long-press Mode).
+2. Open the app.
+3. **Connect All** (the app does this automatically on launch if the cameras
+   are awake).
+4. When the collector is in position: **Start All**.
+5. After the run: **Stop All**.
+6. Verify the session in the **Logs** tab.
+
+---
+
+## Stage 3 (optional) — Bridge mode for desktop control
+
+If for some reason you specifically need a **desktop browser** (Mac with
+keyboard) to drive the cameras instead of the iPhone, the legacy Express
+bridge in `server/bridge/` still works. This is rarely what you want for
+ego-centric capture; it requires either USB-C cables to all three cameras or
+having all three GoPros joined to your local Wi-Fi router. The previous
+revision of this guide documented that path in detail; use it only if Direct
+BLE turns out to be insufficient for your specific multi-collector setup.
 
 ```bash
 cd server/bridge
-cp .env.example .env       # CAMERA_MODE defaults to "mock"
+cp .env.example .env
 npm install
-npm run dev                # bridge listens on http://0.0.0.0:4000
+npm run dev               # http://localhost:4000
 ```
 
-You should see:
-
-```
-[bridge] Bridge server running at http://0.0.0.0:4000
-[bridge] Camera mode: mock
-[bridge] Auth: disabled
-```
-
-Verify locally on the Mac:
-
-```bash
-curl http://localhost:4000/api/health
-# {"status":"ok",...,"mode":"mock"}
-```
-
-Find your Mac's LAN IP:
-
-```bash
-ipconfig getifaddr en0          # most Macs
-# or
-ifconfig | grep "inet " | grep -v 127
-```
-
-Open `http://<MAC_IP>:4000/api/health` in your phone's browser. If you get the
-JSON back, the phone can reach the bridge. If it can't, your Wi-Fi router is
-isolating clients (common on guest networks) — switch networks or use Stage 2b.
-
-### Phone side
-
-1. Open the Vercel URL in Safari.
-2. **Settings** → **Local LAN** → **Bridge URL** = `http://<MAC_IP>:4000` → **Test Connection**.
-   - You should see "Connected!" in green.
-3. Save settings. Go back to **Capture** — the banner now says **Bridge connected**.
-4. Repeat the Connect All / Start All / Stop All flow. The bridge terminal prints lines like:
-
-   ```
-   [bridge] Camera 1 connect: ok
-   [bridge] Session <uuid> started, spread=12ms
-   [bridge] Session <uuid> stopped, duration=4218ms
-   ```
-5. The bridge writes a JSONL log to `logs/session-YYYY-MM-DD.jsonl`. Tail it:
-
-   ```bash
-   tail -f logs/session-$(date -u +%F).jsonl
-   ```
-
-### Stage 2b — Cloudflare Tunnel (only if you need HTTPS / are on a hostile network)
-
-Vercel serves over HTTPS. Some browsers refuse HTTP-to-the-bridge calls
-("mixed content"). If Stage 2 fails with a fetch error in Safari, expose the
-bridge via Cloudflare:
-
-```bash
-brew install cloudflare/cloudflare/cloudflared
-cloudflared tunnel --url http://localhost:4000
-# → https://random-words.trycloudflare.com
-```
-
-Phone → **Settings** → mode **Tunnel** → paste the `https://…trycloudflare.com`
-URL → Test Connection → Save.
+Then in the app: **Settings → Local LAN** → bridge URL → **Test Connection**.
 
 ---
 
-## Stage 3 — Real GoPros
-
-Set this up **with one camera first**, then add the others.
-
-### 3.0 Hardware/OS prep
-
-- Mac on macOS 12+ with Wi-Fi.
-- GoPro HERO11/12/13 (Open GoPro–compatible) on latest firmware.
-- For each GoPro, enable Wi-Fi: long-press `MODE`, select Connections → Wi-Fi.
-
-### 3.1 Connect the Mac to the GoPro
-
-The Open GoPro HTTP API expects the Mac to be on the camera's Wi-Fi (the
-camera is the access point at `10.5.5.9:8080`):
-
-1. On the GoPro: **Connect Device → GoPro App**. Note the SSID (e.g. `GP24500001`) and password.
-2. On the Mac, join that SSID from the Wi-Fi menu.
-3. Verify:
-
-   ```bash
-   curl http://10.5.5.9:8080/gopro/camera/info
-   # → JSON with model_name, firmware_version, etc.
-   ```
-
-   If that works, the bridge will work too.
-
-### 3.2 Configure the bridge for one real camera
-
-Edit `server/bridge/.env`:
-
-```env
-CAMERA_MODE=real
-GOPRO_COMMAND_TIMEOUT_MS=5000
-```
-
-Edit `server/bridge/config/cameras.json` — for the single-camera test, leave only
-GoPro 1 with the right IP:
-
-```json
-[
-  { "id": 1, "name": "GoPro 1", "ip": "10.5.5.9", "port": 8080 }
-]
-```
-
-Restart the bridge: `npm run dev`. From the phone, in **Capture** tab:
-
-1. Tap **Connect** on GoPro 1 → card turns green and shows the model + firmware.
-2. Tap **Start** → camera starts recording, red dot appears.
-3. Tap **Stop** → camera stops.
-4. Confirm by opening the GoPro physically — it actually started/stopped
-   recording in sync with what the app says.
-
-### 3.3 Multi-camera reality check (READ THIS)
-
-> **Single-Mac limitation:** the Mac can only join **one** GoPro Wi-Fi network at a
-> time. To control three GoPros simultaneously over Wi-Fi from the same Mac
-> you need ONE of these:
->
-> 1. **Three USB-Ethernet/USB-C cables** to the cameras (every modern GoPro
->    exposes the same HTTP API over USB at a per-cable IP). This is the most
->    reliable for ego-centric capture and lets the Mac control all three
->    instantly. **Recommended.**
->
-> 2. **Three USB Wi-Fi adapters** on the Mac, each joined to one GoPro AP. Works
->    but flakier; cameras must each be on a unique IP and you’ll need static
->    routes.
->
-> 3. **All three GoPros joined to your local Wi-Fi network** (camera in
->    "Station" mode, joining your router) and the Mac on the same Wi-Fi. Then
->    each camera gets a DHCP IP from your router on `:8080`. This works with
->    just the Mac's built-in Wi-Fi, but: range is whatever your router has,
->    and bouncing between cameras is throttled by the router.
->
-> Pick option **3** for an in-room test, option **1** for actual collection.
-
-For each camera you connect, find its IP (router DHCP table or `ip neighbor`
-on Linux / `arp -a` on macOS). Then in `server/bridge/config/cameras.json`:
-
-```json
-[
-  { "id": 1, "name": "GoPro 1", "ip": "192.168.50.11", "port": 8080 },
-  { "id": 2, "name": "GoPro 2", "ip": "192.168.50.12", "port": 8080 },
-  { "id": 3, "name": "GoPro 3", "ip": "192.168.50.13", "port": 8080 }
-]
-```
-
-Restart the bridge. Repeat the start-all / stop-all flow from the phone. Watch
-the bridge log — every command issued, latency, success/failure.
-
-### 3.4 Sync quality
-
-The Capture banner shows **"X ms command spread across cameras"** after Start All.
-This is the wall-clock spread between the first and last camera responding.
-
-For ego-centric capture, you typically want < 200 ms. If you’re seeing
-multi-second spreads it almost always means:
-
-- Cameras are on different Wi-Fi networks (Mac is roaming) — switch to
-  USB or single shared network.
-- Bridge is running on a remote machine with high RTT to the GoPros — run
-  it on the same Mac that holds the GoPro Wi-Fi.
-
----
-
-## Common Issues
+## Common issues (Direct BLE)
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Phone shows **"Bridge unreachable"** | Phone is not on same Wi-Fi as Mac, or router has client isolation | Same Wi-Fi; or use Cloudflare Tunnel (Stage 2b) |
-| Safari console: "Mixed content blocked" | Vercel page is HTTPS, bridge URL is HTTP | Use Cloudflare Tunnel and set Connection Mode → Tunnel |
-| Connect succeeds but Start says "Camera not connected" | Camera Wi-Fi dropped between calls (GoPro AP power-saves) | Reconnect; or set GoPro to never sleep in camera settings |
-| `curl 10.5.5.9:8080/...` works but bridge gets timeouts | Mac roamed to a different SSID | Re-pin Mac to the GoPro Wi-Fi; consider USB |
-| WebSocket never connects, only polling | Tunnel/proxy strips upgrade | Most tunnels (Cloudflare, ngrok) support WS; check tunnel logs. App still works via polling, just 2 s slower. |
-| Bridge shows `Origin … not allowed` | Vercel domain not in `ALLOWED_ORIGINS` | Add it to `server/bridge/.env`, restart bridge |
+| **"Direct BLE not supported here"** in Settings | You opened the Vercel URL in a browser, not the native app | Install the EAS-built iOS app on the phone |
+| Pair Cameras → Scan finds nothing | Cameras not in pairing mode, or iOS Bluetooth permission not granted | Re-do *Connect Device → GoPro Quik App* on each camera; check iPhone Settings → Privacy → Bluetooth → EGO GoProSYNC |
+| Pairing succeeds, Connect fails with "Camera disconnected" | Camera went to sleep between pairing and connect | Wake the camera (Mode button); the app sends Keep Alive every 3 s while connected |
+| Start All only starts 2 of 3 | Third camera lost BLE link (out of range, low battery) | Tap **Refresh** on that camera card; if it stays red, reconnect |
+| Big command spread (>2 s) | iOS BLE stack serializes connections to the same controller; with 3 simultaneous writes the third can be slow | Generally fine for body-mounted ego data; if you need sub-100ms sync, run a local time-sync clap at the start of each session and rely on post-hoc alignment |
+| Battery drains very fast on the phone | BLE central + 3 connections + keep-alive at 3 s is genuinely heavy | Plug the phone into a battery pack between sessions |
 
 ---
 
-## Pre-flight checklist (collection day)
+## Sanity-check checklist (paste into your shoot notes)
 
-- [ ] Mac is on the same network/USB-bus as all three GoPros.
-- [ ] All three GoPros show **Online + green dot** on the iPhone Capture screen.
-- [ ] Tap **Start All** on a stopwatch — confirm all three cameras' red lights
-      come on within ~1 second of each other (visually).
-- [ ] Battery > 70% on all three; storage < 80% full.
-- [ ] Bridge is writing to `logs/session-YYYY-MM-DD.jsonl` (tail it).
-- [ ] iPhone Safari has the Vercel page open with the bridge URL saved (it
-      persists in localStorage between launches — don't clear site data).
-
-If all five boxes are checked, you're good to collect.
+```
+[ ] App opens, banner says "Direct BLE"
+[ ] Settings → Pair Cameras: 3 green slots, all named
+[ ] Connect All → 3 green cards
+[ ] Start All → 3 red dots on the GoPros, banner shows live timer
+[ ] Stop All → session in Logs tab
+[ ] Verified .MP4 on each SD card
+```

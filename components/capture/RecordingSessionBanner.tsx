@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { Timer, Zap } from 'lucide-react-native';
 import { RecordingSession } from '@/lib/capture/types';
 import { formatDuration } from '@/lib/capture/formatting';
@@ -31,7 +31,7 @@ export function RecordingSessionBanner({ session }: Props) {
   return (
     <View style={[styles.banner, isActive ? styles.active : styles.stopped]}>
       <View style={styles.row}>
-        <Timer size={15} color={isActive ? '#ef4444' : '#9ca3af'} />
+        {isActive ? <PulsingDot /> : <Timer size={15} color="#9ca3af" />}
         <Text style={[styles.label, { color: isActive ? '#fca5a5' : '#9ca3af' }]}>
           {isActive ? 'Recording' : 'Session ended'}
         </Text>
@@ -51,7 +51,37 @@ export function RecordingSessionBanner({ session }: Props) {
   );
 }
 
+function PulsingDot() {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(scale, { toValue: 1.5, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(scale, { toValue: 1, duration: 700, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(opacity, { toValue: 0.4, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 1, duration: 700, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+        ]),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [scale, opacity]);
+  return (
+    <Animated.View style={[styles.pulseDot, { transform: [{ scale }], opacity }]} />
+  );
+}
+
 const styles = StyleSheet.create({
+  pulseDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#ef4444',
+  },
   banner: {
     borderRadius: 12,
     paddingHorizontal: 14,

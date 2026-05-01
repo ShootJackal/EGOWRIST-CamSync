@@ -7,7 +7,8 @@ export type BridgeStatus = 'connected' | 'unreachable' | 'mock' | 'ble' | 'error
 export interface PairedBleDevice {
   cameraId: CameraId;
   bleId: string;
-  name: string;
+  name: string; // BLE-advertised name (e.g. "GP24500001")
+  nickname?: string; // User-given label (e.g. "Left Wrist")
   pairedAt: string;
 }
 

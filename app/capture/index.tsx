@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -6,8 +6,9 @@ import {
   Text,
   View,
   Pressable,
+  RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { ScrollText } from 'lucide-react-native';
 
 import {
@@ -15,18 +16,23 @@ import {
   CameraId,
   CameraStatus,
   CommandLogEntry,
+  PairedBleDevice,
   RecordingSession,
   CAMERA_IDS,
   defaultCameraStatus,
 } from '@/lib/capture/types';
 import { loadBridgeSettings } from '@/lib/capture/storage';
 import * as Api from '@/lib/capture/api';
+import { preflight } from '@/lib/capture/preflight';
+import * as Haptics from '@/lib/capture/haptics';
 
 import { BridgeConnectionBanner } from '@/components/capture/BridgeConnectionBanner';
 import { RecordingSessionBanner } from '@/components/capture/RecordingSessionBanner';
 import { GlobalCaptureControls } from '@/components/capture/GlobalCaptureControls';
 import { CameraCard } from '@/components/capture/CameraCard';
 import { CommandLogSheet } from '@/components/capture/CommandLogSheet';
+import { PreflightBanner } from '@/components/capture/PreflightBanner';
+import { EmptyPairCTA } from '@/components/capture/EmptyPairCTA';
 
 function uuid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -42,6 +48,9 @@ export default function CaptureDashboard() {
   const [cameraBusy, setCameraBusy] = useState<Record<CameraId, boolean>>({ 1: false, 2: false, 3: false });
   const [logsVisible, setLogsVisible] = useState(false);
   const [bridgeUrl, setBridgeUrl] = useState('');
+  const [paired, setPaired] = useState<PairedBleDevice[]>([]);
+  const [pulling, setPulling] = useState(false);
+  const [overrideBlockers, setOverrideBlockers] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
 
@@ -75,6 +84,7 @@ export default function CaptureDashboard() {
   const loadSettings = useCallback(async () => {
     const settings = await loadBridgeSettings();
     setBridgeUrl(settings.bridgeUrl);
+    setPaired(settings.pairedBleDevices ?? []);
     Api.initApi(settings);
   }, []);
 
@@ -134,6 +144,25 @@ export default function CaptureDashboard() {
     };
   }, []);
 
+  // Refresh settings (especially paired devices and connection mode) every
+  // time the user comes back to this tab.
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      (async () => {
+        const settings = await loadBridgeSettings();
+        if (!alive) return;
+        setBridgeUrl(settings.bridgeUrl);
+        setPaired(settings.pairedBleDevices ?? []);
+        // Re-init API so a connection-mode change in Settings actually takes effect.
+        Api.initApi(settings);
+        await connectToBridge();
+        await pollCameras();
+      })();
+      return () => { alive = false; };
+    }, [connectToBridge, pollCameras]),
+  );
+
   // ── Global controls ─────────────────────────────────────────────────────────
 
   const handleConnectAll = async () => {
@@ -149,6 +178,15 @@ export default function CaptureDashboard() {
   };
 
   const handleStartAll = async () => {
+    const isBle = Api.isBleMode();
+    const report = preflight({ paired, cameras, isBleMode: isBle });
+    if (!report.ready && !overrideBlockers) {
+      Haptics.notifyWarning();
+      setOverrideBlockers(true); // Tap Start All again to confirm
+      return;
+    }
+    setOverrideBlockers(false);
+    Haptics.tapMedium();
     const t = new Date().toISOString();
     setGlobalBusy(true);
     try {
@@ -156,6 +194,8 @@ export default function CaptureDashboard() {
       results.forEach((r) =>
         log(r.cameraId, 'startRecording', t, r.success, r.latencyMs, r.errorMessage, newSession?.id),
       );
+      const allOk = results.length > 0 && results.every((r) => r.success);
+      if (allOk) Haptics.notifySuccess(); else Haptics.notifyError();
       setSession(newSession);
       await pollCameras();
     } finally {
@@ -164,6 +204,7 @@ export default function CaptureDashboard() {
   };
 
   const handleStopAll = async () => {
+    Haptics.tapMedium();
     const t = new Date().toISOString();
     setGlobalBusy(true);
     try {
@@ -171,6 +212,8 @@ export default function CaptureDashboard() {
       results.forEach((r) =>
         log(r.cameraId, 'stopRecording', t, r.success, r.latencyMs, r.errorMessage, endedSession?.id),
       );
+      const allOk = results.length > 0 && results.every((r) => r.success);
+      if (allOk) Haptics.notifySuccess(); else Haptics.notifyError();
       if (endedSession) setSession(endedSession);
       await pollCameras();
     } finally {
@@ -194,11 +237,13 @@ export default function CaptureDashboard() {
     setCameraBusy((prev) => ({ ...prev, [id]: v }));
 
   const handleConnect = async (id: CameraId) => {
+    Haptics.tapLight();
     const t = new Date().toISOString();
     setCamBusy(id, true);
     try {
       const r = await Api.connectCamera(id);
       log(r.cameraId, 'connect', t, r.success, r.latencyMs, r.errorMessage);
+      if (!r.success) Haptics.notifyError();
       await pollCameras();
     } finally {
       setCamBusy(id, false);
@@ -206,6 +251,7 @@ export default function CaptureDashboard() {
   };
 
   const handleDisconnect = async (id: CameraId) => {
+    Haptics.tapLight();
     const t = new Date().toISOString();
     setCamBusy(id, true);
     try {
@@ -218,11 +264,13 @@ export default function CaptureDashboard() {
   };
 
   const handleStart = async (id: CameraId) => {
+    Haptics.tapMedium();
     const t = new Date().toISOString();
     setCamBusy(id, true);
     try {
       const r = await Api.startCameraRecording(id, session?.id);
       log(r.cameraId, 'startRecording', t, r.success, r.latencyMs, r.errorMessage, session?.id);
+      r.success ? Haptics.notifySuccess() : Haptics.notifyError();
       await pollCameras();
     } finally {
       setCamBusy(id, false);
@@ -230,11 +278,13 @@ export default function CaptureDashboard() {
   };
 
   const handleStop = async (id: CameraId) => {
+    Haptics.tapMedium();
     const t = new Date().toISOString();
     setCamBusy(id, true);
     try {
       const r = await Api.stopCameraRecording(id, session?.id);
       log(r.cameraId, 'stopRecording', t, r.success, r.latencyMs, r.errorMessage, session?.id);
+      r.success ? Haptics.notifySuccess() : Haptics.notifyError();
       await pollCameras();
     } finally {
       setCamBusy(id, false);
@@ -242,6 +292,7 @@ export default function CaptureDashboard() {
   };
 
   const handleRefresh = async (id: CameraId) => {
+    Haptics.tapLight();
     setCamBusy(id, true);
     try {
       const t = new Date().toISOString();
@@ -253,8 +304,30 @@ export default function CaptureDashboard() {
     }
   };
 
-  const isAnyRecording = cameras.some((c) => c.recordingState === 'recording');
+  const isBle = Api.isBleMode();
+  const visibleCameras = useMemo(
+    () => (isBle ? cameras.filter((c) => paired.some((p) => p.cameraId === c.id)) : cameras),
+    [cameras, paired, isBle],
+  );
+  const isAnyRecording = visibleCameras.some((c) => c.recordingState === 'recording');
   const recentLogs = logs.slice(0, 3);
+  const showEmptyState = isBle && paired.length === 0 && bridgeStatus !== 'unsupported';
+  const report = useMemo(
+    () => preflight({ paired, cameras: visibleCameras, isBleMode: isBle }),
+    [paired, visibleCameras, isBle],
+  );
+
+  const onPullRefresh = async () => {
+    setPulling(true);
+    Haptics.tapLight();
+    try {
+      const updated = await Api.refreshAll();
+      setCameras(updated);
+      const active = await Api.getActiveSession();
+      setSession(active);
+    } catch { /* ignore */ }
+    finally { setPulling(false); }
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -262,6 +335,14 @@ export default function CaptureDashboard() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={pulling}
+            onRefresh={onPullRefresh}
+            tintColor="#60a5fa"
+            colors={['#60a5fa']}
+          />
+        }
       >
         {/* Title */}
         <View style={styles.titleRow}>
@@ -281,31 +362,55 @@ export default function CaptureDashboard() {
         {/* Session banner */}
         <RecordingSessionBanner session={session} />
 
-        {/* Global controls */}
-        <GlobalCaptureControls
-          isRecording={isAnyRecording}
-          busy={globalBusy}
-          onConnectAll={handleConnectAll}
-          onStartAll={handleStartAll}
-          onStopAll={handleStopAll}
-          onRefreshAll={handleRefreshAll}
-        />
+        {/* Pre-flight readiness (only when we actually expect cameras) */}
+        {!showEmptyState && (paired.length > 0 || !isBle) && !isAnyRecording && (
+          <PreflightBanner report={report} />
+        )}
 
-        {/* Camera cards */}
-        <Text style={styles.sectionLabel}>Cameras</Text>
-        {cameras.map((cam) => (
-          <CameraCard
-            key={cam.id}
-            camera={cam}
-            busy={cameraBusy[cam.id] || globalBusy}
-            onConnect={() => handleConnect(cam.id)}
-            onDisconnect={() => handleDisconnect(cam.id)}
-            onStart={() => handleStart(cam.id)}
-            onStop={() => handleStop(cam.id)}
-            onRefresh={() => handleRefresh(cam.id)}
-            onSettings={() => router.push(`/capture/camera/${cam.id}`)}
-          />
-        ))}
+        {/* Empty state for BLE without pairs */}
+        {showEmptyState ? (
+          <EmptyPairCTA onPair={() => router.push('/capture/pair' as never)} />
+        ) : (
+          <>
+            {/* Override-blockers hint */}
+            {overrideBlockers && !report.ready && !isAnyRecording && (
+              <View style={styles.overrideHint}>
+                <Text style={styles.overrideHintText}>
+                  Tap Start All again to record anyway.
+                </Text>
+                <Pressable onPress={() => setOverrideBlockers(false)} hitSlop={6}>
+                  <Text style={styles.overrideHintCancel}>Cancel</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* Global controls */}
+            <GlobalCaptureControls
+              isRecording={isAnyRecording}
+              busy={globalBusy}
+              onConnectAll={handleConnectAll}
+              onStartAll={handleStartAll}
+              onStopAll={handleStopAll}
+              onRefreshAll={handleRefreshAll}
+            />
+
+            {/* Camera cards */}
+            <Text style={styles.sectionLabel}>Cameras</Text>
+            {visibleCameras.map((cam) => (
+              <CameraCard
+                key={cam.id}
+                camera={cam}
+                busy={cameraBusy[cam.id] || globalBusy}
+                onConnect={() => handleConnect(cam.id)}
+                onDisconnect={() => handleDisconnect(cam.id)}
+                onStart={() => handleStart(cam.id)}
+                onStop={() => handleStop(cam.id)}
+                onRefresh={() => handleRefresh(cam.id)}
+                onSettings={() => router.push(`/capture/camera/${cam.id}`)}
+              />
+            ))}
+          </>
+        )}
 
         {/* Recent log preview */}
         {recentLogs.length > 0 && (
@@ -416,5 +521,28 @@ const styles = StyleSheet.create({
   logLatency: {
     fontSize: 11,
     color: '#4b5563',
+  },
+  overrideHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f59e0b15',
+    borderColor: '#f59e0b44',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    gap: 10,
+  },
+  overrideHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#fbbf24',
+    fontWeight: '600',
+  },
+  overrideHintCancel: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontWeight: '600',
   },
 });

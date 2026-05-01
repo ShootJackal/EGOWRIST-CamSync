@@ -4,9 +4,6 @@ Goal: a collector wears three GoPros on their limbs, holds an iPhone, opens
 this app, and starts/stops all three cameras at once. **Nothing physically
 attached to the GoPros — pure Bluetooth from the phone.**
 
-This is the same workflow as
-[Camera Tools for GoPro Heros](https://www.toolsforgopro.com/cameratools).
-
 There are three stages. Stage 0 needs nothing. Stage 1 needs the cameras.
 Stage 2 is the actual collection-day rehearsal.
 

@@ -18,7 +18,8 @@
     "bridge:install": "cd server/bridge && npm install",
     "bridge:start": "cd server/bridge && npm start",
     "setup": "npm install && npm run bridge:install",
-    "lan": "node scripts/lan.js"
+    "lan": "node scripts/lan.js",
+    "find-gopros": "node scripts/find-gopros.js"
   },
   "dependencies": {
     "@expo-google-fonts/lexend": "^0.2.3",

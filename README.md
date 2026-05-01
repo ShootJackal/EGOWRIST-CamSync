@@ -1,248 +1,213 @@
 # EGO GoProSYNC — TaskFlow Capture
 
-A TaskFlow-styled GoPro command center for controlling 3 GoPro cameras.
+A Camera-Tools-style remote for three body-worn GoPro cameras. Built for
+ego-centric data collection: collectors wear GoPros on their limbs, hold the
+phone, and start/stop all three cameras from one screen.
 
-**Frontend:** Expo + React Native Web, hosted on Vercel  
-**Bridge:** Local Express server running on your Mac, controls GoPros over Wi-Fi
+**Three connection modes — pick the one that matches your situation:**
 
----
+| Mode | Phone talks to GoPros via | Anything attached to the GoPros? | Where the app runs |
+|---|---|---|---|
+| **Direct BLE** *(recommended)* | The phone's own Bluetooth | Nothing | Native iOS/Android app (built from this repo) |
+| **Mock** | n/a — simulated | Nothing | Anywhere (Vercel web, native, dev) |
+| **Bridge** | A Mac on the same Wi-Fi as the cameras | Nothing | Anywhere; Mac runs the bridge |
 
-## Architecture
-
-```
-iPhone Safari
-    ↓ HTTPS
-Vercel frontend (taskflow-capture.vercel.app)
-    ↓ HTTP/WebSocket (configurable URL)
-Local Mac bridge (http://192.168.1.50:4000)
-    ↓ Wi-Fi (Open GoPro HTTP API)
-GoPro 1 / GoPro 2 / GoPro 3
-```
-
-The Vercel frontend **never** directly touches GoPro hardware.  
-The local bridge handles all camera I/O and exposes a clean REST + WebSocket API.
+The Direct BLE mode is exactly the architecture used by
+[Camera Tools for GoPro Heros](https://www.toolsforgopro.com/cameratools) —
+no Mac, no cables, no router, no SD-card swap. Just the phone talking
+Bluetooth straight to each camera using the
+[Open GoPro BLE protocol](https://gopro.github.io/OpenGoPro/ble/).
 
 ---
 
-## How This Works With Vercel
+## Why a native app, not just a Vercel website
 
-The frontend is a static Expo Web export. It runs entirely in the browser. It connects to your Mac bridge via a URL you enter in the Settings screen.
+The Vercel-hosted web build of this app **cannot** drive GoPros over BLE — iOS
+Safari does not implement Web Bluetooth, and even if it did the GoPro Wi-Fi
+HTTP API does not send CORS headers, so a Vercel page can't call it. The web
+build is great for showing collectors the UI in mock mode and for desktop
+debugging, but for actual collection you build and install the native app
+on the phone.
 
-On Vercel, `EXPO_PUBLIC_DEFAULT_BRIDGE_URL` can be set as an environment variable for a default bridge URL, but this is optional — users can always change it in Settings.
+This repo ships both. Same TypeScript, same UI, two outputs:
 
-```
-Vercel build command: npm run vercel-build
-Output directory:     dist
-```
+- `npm run vercel-build` → static web bundle in `dist/` (mock mode demo).
+- `npm run build:ios`    → native iOS app via [EAS Build](https://docs.expo.dev/eas/) (Direct BLE works here).
 
 ---
 
-## Quick Start
+## Quick start
 
-### 1. Frontend (Vercel or local dev)
+### 1. Install
 
 ```bash
 npm install
-npm run web          # local dev server
-npm run build:web    # build for Vercel
 ```
 
-### 2. Bridge (Mac)
+### 2. Try it in mock mode immediately (no hardware needed)
 
 ```bash
-npm run bridge:install      # install bridge dependencies
-cp server/bridge/.env.example server/bridge/.env
-# Edit .env if needed (defaults work for mock mode)
-npm run bridge              # starts bridge at http://localhost:4000
+npm run web                 # http://localhost:8081
 ```
 
-Then open the Vercel app (or `http://localhost:8081`), go to **Settings**, enter `http://localhost:4000` as the bridge URL, and set mode to **Local LAN**.
+Or push to Vercel — `npm run vercel-build` produces `dist/`.
+
+### 3. Build the native iOS app for real BLE control
+
+```bash
+npm install -g eas-cli
+eas login
+eas build:configure
+npm run build:ios          # builds in the cloud, ~15 min
+```
+
+EAS will email you a `.ipa` link. Install it on the iPhone via TestFlight or
+Apple Configurator. Open the app → **Settings → Direct BLE → Pair Cameras**.
+
+(See `TESTING.md` for the full step-by-step.)
 
 ---
 
-## Connection Options
+## Direct BLE mode — how it works
 
-### Option A — Same Mac (local dev)
+```
+[ iPhone (native app) ]
+          │
+          │  Bluetooth LE  (Open GoPro BLE — service FEA6, char b5f9-0072)
+          ├───────────────────▶  GoPro 1
+          ├───────────────────▶  GoPro 2
+          └───────────────────▶  GoPro 3
+```
 
-Run both the Expo dev server and bridge on your Mac:
+The app maintains one BLE connection per camera, sends the
+[Set Shutter](https://gopro.github.io/OpenGoPro/ble/features/control.html#set-shutter)
+command (ID `0x01`) to start and stop, polls
+[Get Status Values](https://gopro.github.io/OpenGoPro/ble/features/query.html)
+for battery / SD / encoding, and sends a Keep Alive every 3 s so the cameras
+don't sleep. Recording sessions are tracked locally with the cross-camera
+*command spread* — the wall-clock difference between the first and last
+camera responding to Start All — visible in the recording banner.
+
+### Camera support
+
+Open GoPro BLE works on Hero 9, 10, 11, 11 Mini, 12, 13, Max, Max 2, and
+Lit Hero. The app pairs with each camera once; subsequent connections are
+automatic.
+
+### Pairing each camera (one-time per phone)
+
+On each GoPro:
+
+1. **Preferences → Connections → Connect Device → GoPro Quik App**
+2. The camera will advertise as `GP24500001` (or similar — its serial).
+
+In the app:
+
+1. **Settings → Direct BLE → Pair Cameras**.
+2. Tap **Assign** next to GoPro 1, then tap the camera name in the scan
+   results. Repeat for GoPro 2 and 3.
+3. Go back to **Capture** → **Connect All** → **Start All**.
+
+iOS will store the BLE bond, so future launches connect without re-pairing.
+
+---
+
+## Bridge mode — when to use it
+
+If you specifically need the *desktop browser* on a Mac to drive the cameras
+(for scripting, multi-display setups, etc.), the Express bridge in
+`server/bridge/` still works exactly as before. See `TESTING.md` Stage 3
+for the bridge workflow. For ego-centric mobile collection, ignore the
+bridge entirely — Direct BLE is simpler and has no extra moving parts.
+
+---
+
+## Mock mode
+
+Everything works without hardware. Use it for:
+
+- Showing collectors the UI before a session.
+- Debugging the dashboard layout.
+- Verifying CI / Vercel deployments.
 
 ```bash
-# Terminal 1
-npm run web
+npm run web                  # local
+# or just open the Vercel URL in any browser
+```
 
-# Terminal 2
+In **Settings → Connection Mode**, pick **Mock**.
+
+---
+
+## Repository layout
+
+```
+app/
+  capture/
+    index.tsx          ← main dashboard
+    settings.tsx       ← connection mode + pairing entry point
+    pair.tsx           ← BLE scan + per-slot assignment (native only)
+    logs.tsx           ← session history
+    camera/[id].tsx    ← per-camera detail
+components/capture/    ← UI components
+lib/capture/
+  api.ts               ← unified facade over the 3 clients
+  bleClient.ts         ← Open GoPro BLE implementation (native)
+  bridgeClient.ts      ← HTTP/WebSocket client for the Mac bridge
+  mockBridgeClient.ts  ← in-process simulation
+  types.ts
+  storage.ts
+  formatting.ts
+server/bridge/         ← optional Mac bridge (Express + WebSocket)
+```
+
+---
+
+## Commands
+
+```bash
+# Native (Direct BLE)
+npm run build:ios          # EAS production-ish iOS build (.ipa)
+npm run build:ios:dev      # Dev client build for iterative work
+npm run build:android      # Android equivalent
+
+# Web / Vercel
+npm run web                # Expo dev server, web target
+npm run build:web          # Same as vercel-build
+npm run vercel-build       # Static web bundle in dist/
+
+# Bridge (only if you actually want to use the Mac bridge)
+npm run bridge:install
 npm run bridge
-```
 
-In Settings, enter: `http://localhost:4000`
-
-### Option B — Phone on same Wi-Fi (LAN)
-
-Run bridge on Mac. Phone opens the Vercel-hosted frontend.
-
-```bash
-# Find your Mac's LAN IP
-ifconfig | grep "inet " | grep -v 127
-
-# Start bridge (it listens on 0.0.0.0)
-npm run bridge
-```
-
-In the Vercel app Settings, enter: `http://<MAC_LAN_IP>:4000`  
-Set mode to **Local LAN**.
-
-### Option C — Tunnel (HTTPS, works anywhere)
-
-Use Cloudflare Tunnel to expose the bridge securely over HTTPS:
-
-```bash
-# Install cloudflared
-brew install cloudflare/cloudflare/cloudflared
-
-# Start tunnel (one-time URL, good for testing)
-cloudflared tunnel --url http://localhost:4000
-```
-
-Copy the `https://....trycloudflare.com` URL and paste it in Settings.  
-Set mode to **Tunnel**.
-
-This is the recommended approach for avoiding mixed-content HTTPS issues when the Vercel frontend is served over HTTPS.
-
----
-
-## Mock Mode
-
-The frontend includes a full mock camera simulation. No bridge required.
-
-- Open the app
-- Go to Settings → Connection Mode → **Mock**
-- All 3 cameras simulate connect/record/stop with realistic battery drain and storage fill
-
-Mock mode works on Vercel with zero additional setup.
-
----
-
-## Bridge API
-
-### REST Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Bridge health and camera connection states |
-| GET | `/api/cameras` | All camera statuses |
-| GET | `/api/cameras/:id` | Single camera status |
-| POST | `/api/cameras/:id/connect` | Connect a camera |
-| POST | `/api/cameras/:id/disconnect` | Disconnect a camera |
-| POST | `/api/cameras/:id/start` | Start recording |
-| POST | `/api/cameras/:id/stop` | Stop recording |
-| POST | `/api/cameras/:id/status` | Refresh camera status |
-| POST | `/api/cameras/connect-all` | Connect all cameras |
-| POST | `/api/cameras/start-all` | Start all cameras (creates session) |
-| POST | `/api/cameras/stop-all` | Stop all cameras (closes session) |
-| POST | `/api/cameras/status-all` | Refresh all camera statuses |
-| GET | `/api/sessions/active` | Active recording session |
-| GET | `/api/sessions` | Session history |
-
-### WebSocket
-
-Connect to `ws://<bridge-host>:<port>/ws`
-
-The bridge broadcasts every 2 seconds:
-```json
-{ "type": "cameras", "cameras": [...] }
-{ "type": "session", "session": { ... } | null }
-```
-
-The frontend falls back to polling every 2 seconds if WebSocket is unavailable.
-
-### Authentication
-
-Set `BRIDGE_AUTH_TOKEN` in the bridge `.env` to require a Bearer token.  
-Enter the same token in the frontend Settings screen.
-
----
-
-## Bridge Environment Variables
-
-```env
-BRIDGE_PORT=4000
-BRIDGE_HOST=0.0.0.0
-BRIDGE_AUTH_TOKEN=           # Leave blank to disable auth
-ALLOWED_ORIGINS=http://localhost:8081,https://*.vercel.app
-CAMERA_MODE=mock             # mock | real
-GOPRO_COMMAND_TIMEOUT_MS=5000
-LOG_LEVEL=info               # info | silent
-LOG_DIR=../../logs
+# Quality
+npm run typecheck
 ```
 
 ---
 
-## Real GoPro Setup
+## Vercel deployment
 
-Set `CAMERA_MODE=real` in the bridge `.env`.
+Still works. The Vercel build is the mock-mode/UI-demo build; it cannot do
+BLE (browser limitation) but it's useful for stakeholder demos and lets you
+hand the URL to a collector who isn't ready to install the native app.
 
-Edit `server/bridge/config/cameras.json`:
-```json
-[
-  { "id": 1, "name": "GoPro 1", "ip": "10.5.5.9", "port": 8080 }
-]
+```
+Build command:    npm run vercel-build
+Output directory: dist
 ```
 
-Each camera must be running in AP mode (the Mac joins the camera's Wi-Fi).  
-The bridge talks to GoPros via the [Open GoPro HTTP API](https://gopro.github.io/OpenGoPro/).
-
-**Limitation:** With multiple GoPros, each needs its own network interface or the Mac must switch Wi-Fi networks between cameras. For simultaneous multi-camera control, USB or a dedicated Wi-Fi bridge per camera is recommended.
+Optional env var: `EXPO_PUBLIC_DEFAULT_BRIDGE_URL` to pre-fill the bridge URL
+in Settings.
 
 ---
 
-## Session Logs
+## Bridge API (only relevant in bridge mode)
 
-The bridge writes JSONL logs to `./logs/session-YYYY-MM-DD.jsonl`:
+See `server/bridge/src/index.ts`. REST + WebSocket; identical contract to
+what the Direct BLE and Mock clients expose. Endpoints documented in the
+previous README revision are still valid:
 
-```json
-{
-  "timestamp": "2026-05-01T12:00:00.000Z",
-  "sessionId": "abc-123",
-  "cameraId": 1,
-  "command": "startRecording",
-  "commandIssuedAt": "...",
-  "responseReceivedAt": "...",
-  "latencyMs": 312,
-  "success": true,
-  "errorCode": null,
-  "errorMessage": null
-}
-```
-
----
-
-## Commands Reference
-
-```bash
-# Frontend
-npm install          # install frontend deps
-npm run web          # start Expo web dev server
-npm run build:web    # build for Vercel (outputs to dist/)
-npm run vercel-build # same as build:web (used by Vercel)
-npm run typecheck    # TypeScript check
-
-# Bridge
-npm run bridge:install   # install bridge deps
-npm run bridge           # run bridge in dev mode (hot reload)
-npm run bridge:start     # run bridge in production mode
-
-# Both
-npm run bridge:install && npm run bridge
-```
-
----
-
-## Vercel Deployment
-
-1. Push to GitHub
-2. Connect the repo to Vercel
-3. Build command: `npm run vercel-build`
-4. Output directory: `dist`
-5. (Optional) Add environment variable: `EXPO_PUBLIC_DEFAULT_BRIDGE_URL=`
-
-The frontend will show in **Mock mode** by default until a user configures a bridge URL in Settings.
+`/api/health`, `/api/cameras`, `/api/cameras/:id/{connect,disconnect,start,stop,status}`,
+`/api/cameras/{connect,start,stop,status}-all`, `/api/sessions/active`, `/api/sessions`,
+`ws://…/ws`.

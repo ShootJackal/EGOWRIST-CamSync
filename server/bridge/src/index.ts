@@ -224,9 +224,7 @@ app.post('/api/cameras/start-all', async (req, res) => {
   const issuedAt = new Date();
   const session = sessions.startSession(registry.ids());
   const { results, spreadMs } = await registry.startAll(session.id);
-  // Update spread in session
-  const active = sessions.getActive();
-  if (active) (active as { commandSpreadMs: number }).commandSpreadMs = spreadMs;
+  sessions.setActiveCommandSpread(spreadMs);
 
   results.forEach((r) =>
     logger.log(r.cameraId, 'startRecording', issuedAt, r.success, r.latencyMs, {

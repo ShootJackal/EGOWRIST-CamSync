@@ -20,6 +20,7 @@ export async function loadBridgeSettings(): Promise<BridgeSettings> {
       bridgeUrl: parsed.bridgeUrl ?? DEFAULT_BRIDGE_SETTINGS.bridgeUrl,
       authToken: parsed.authToken ?? DEFAULT_BRIDGE_SETTINGS.authToken,
       connectionMode: parsed.connectionMode ?? DEFAULT_BRIDGE_SETTINGS.connectionMode,
+      pairedBleDevices: parsed.pairedBleDevices ?? DEFAULT_BRIDGE_SETTINGS.pairedBleDevices,
     };
   } catch {
     return DEFAULT_BRIDGE_SETTINGS;

@@ -38,7 +38,11 @@ export class SessionService {
   }
 
   getActive(): RecordingSession | null {
-    return this.active ? { ...this.active } : null;
+    return this.active;
+  }
+
+  setActiveCommandSpread(spreadMs: number): void {
+    if (this.active) this.active.commandSpreadMs = spreadMs;
   }
 
   getHistory(): RecordingSession[] {

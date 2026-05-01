@@ -17,14 +17,26 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.shootjackal.egogoprosync"
+      "bundleIdentifier": "com.shootjackal.egogoprosync",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "EGO GoProSYNC connects to your GoPro cameras over Bluetooth so you can start and stop recording from your phone without any cables or a Mac.",
+        "NSBluetoothPeripheralUsageDescription": "EGO GoProSYNC needs Bluetooth to discover and control your GoPro cameras.",
+        "UIBackgroundModes": ["bluetooth-central"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f1117"
       },
-      "package": "com.shootjackal.egogoprosync"
+      "package": "com.shootjackal.egogoprosync",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -33,7 +45,15 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "EGO GoProSYNC connects to your GoPro cameras over Bluetooth so you can start and stop recording from your phone."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
